@@ -20,6 +20,10 @@ from open_webui.utils.misc import pop_system_message
 class Pipe:
     class Valves(BaseModel):
         ANTHROPIC_API_KEY: str = Field(default="")
+        ENABLE_1M_CONTEXT: bool = Field(
+            default=False,
+            description="Enable 1M token context window for compatible Sonnet 4/4.5 models (requires Tier 4 access)"
+        )
 
     def __init__(self):
         self.type = "manifold"
@@ -34,6 +38,27 @@ class Pipe:
         self._model_cache: Optional[List[Dict[str, str]]] = None
         self._model_cache_time: float = 0
         self._cache_ttl = int(os.getenv("ANTHROPIC_MODEL_CACHE_TTL", "600"))
+
+    def _is_1m_compatible_model(self, model_id: str) -> bool:
+        """
+        Check if a model is compatible with the 1M token context window.
+        Currently supports Claude Sonnet 4 and Sonnet 4.5.
+        
+        Args:
+            model_id: The model identifier
+            
+        Returns:
+            True if the model supports 1M context window
+        """
+        compatible_models = [
+            "claude-sonnet-4-5",
+            "claude-4-sonnet",
+            "claude-sonnet-4",
+        ]
+        
+        # Check if model_id starts with or contains any compatible model identifier
+        model_lower = model_id.lower()
+        return any(compatible in model_lower for compatible in compatible_models)
 
     def get_anthropic_models_from_api(self, force_refresh: bool = False) -> List[Dict[str, str]]:
         """
@@ -69,6 +94,12 @@ class Pipe:
                 "anthropic-version": "2023-06-01",
                 "content-type": "application/json",
             }
+
+            # Add beta header for 1M context window if enabled and using compatible model
+            model_id = body["model"][body["model"].find(".") + 1 :]
+            if self.valves.ENABLE_1M_CONTEXT and self._is_1m_compatible_model(model_id):
+                headers["anthropic-beta"] = "context-1m-2025-08-07"
+                print(f"Using 1M context window for model: {model_id}")
             
             response = requests.get(
                 "https://api.anthropic.com/v1/models",
